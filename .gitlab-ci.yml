@@ -10,6 +10,8 @@ variables:
 # 1. BUILD: Build and push the unique SHA image
 build-ansible-ci:
   stage: build
+  tags:
+    - docker
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
@@ -30,6 +32,8 @@ build-ansible-ci:
 # 2. TEST: Verify the "Golden Image" is actually functional
 test-ansible-ci:
   stage: test
+  tags:
+    - docker
   image: 
     name: "$TEST_IMAGE"
     pull_policy: always
@@ -53,6 +57,8 @@ test-ansible-ci:
 # 3. RELEASE: Only tag as 'latest' if tests passed on 'main'
 release-latest:
   stage: release
+  tags:
+    - docker
   image:
     name: gcr.io/go-containerregistry/crane:debug
     entrypoint: [""]
