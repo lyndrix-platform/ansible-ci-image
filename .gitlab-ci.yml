@@ -1,24 +1,32 @@
 stages:
   - build
 
-# Wir nutzen Kaniko, weil es sauberer ist als Docker-in-Docker (dind)
+# We use Kaniko because it is cleaner and more secure than Docker-in-Docker (dind)
 build-ansible-ci:
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
   script:
-    # Erstellt die Authentifizierung für deine lokale GitLab Registry
+    # Authenticate with the local GitLab Registry
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf "%s:%s" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
     
-    # Der eigentliche Build-Prozess
+    # The actual Build Process with Caching enabled
     - >-
       /kaniko/executor
       --context "$CI_PROJECT_DIR"
       --dockerfile "$CI_PROJECT_DIR/Dockerfile"
       --destination "$CI_REGISTRY_IMAGE:latest"
       --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      --cache=true
+      --cache-ttl=168h
   rules:
-    - if: $CI_COMMIT_BRANCH == "main"
-    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # 1. Run on Merge Requests to validate the build before merging
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    # 2. ONLY run on 'main' if the actual build files have changed
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - Dockerfile
+        - requirements.yml
+        - .gitlab-ci.yml
