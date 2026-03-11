@@ -1,5 +1,5 @@
 # Critical: Pin this to a specific version for stability (e.g., 2.15-tools)
-FROM cytopia/ansible:latest-tools
+FROM cytopia/ansible:2.15-tools
 
 # 1. Install system and Python dependencies
 # Added git/openssh for CI operations

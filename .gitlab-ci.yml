@@ -1,32 +1,64 @@
 stages:
   - build
+  - test
+  - release
 
-# We use Kaniko because it is cleaner and more secure than Docker-in-Docker (dind)
+variables:
+  # Reference the image by its unique commit SHA during the pipeline
+  TEST_IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+
+# 1. BUILD: Build and push the unique SHA image
 build-ansible-ci:
   stage: build
   image:
     name: gcr.io/kaniko-project/executor:debug
     entrypoint: [""]
   script:
-    # Authenticate with the local GitLab Registry
     - mkdir -p /kaniko/.docker
     - echo "{\"auths\":{\"$CI_REGISTRY\":{\"auth\":\"$(printf "%s:%s" "$CI_REGISTRY_USER" "$CI_REGISTRY_PASSWORD" | base64 | tr -d '\n')\"}}}" > /kaniko/.docker/config.json
-    
-    # The actual Build Process with Caching enabled
     - >-
       /kaniko/executor
       --context "$CI_PROJECT_DIR"
       --dockerfile "$CI_PROJECT_DIR/Dockerfile"
-      --destination "$CI_REGISTRY_IMAGE:latest"
-      --destination "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+      --destination "$TEST_IMAGE"
       --cache=true
       --cache-ttl=168h
   rules:
-    # 1. Run on Merge Requests to validate the build before merging
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
-    # 2. ONLY run on 'main' if the actual build files have changed
     - if: '$CI_COMMIT_BRANCH == "main"'
-      changes:
-        - Dockerfile
-        - requirements.yml
-        - .gitlab-ci.yml
+
+# 2. TEST: Verify the "Golden Image" is actually functional
+test-ansible-ci:
+  stage: test
+  image: 
+    name: "$TEST_IMAGE"
+    pull_policy: always
+  script:
+    - echo "Verifying Image Integrity..."
+    - ansible --version
+    - docker-compose version
+    - zensical --version
+    - |
+      echo "Checking Mitogen strategy path..."
+      if [ ! -f "/plugins/mitogen/ansible_mitogen/plugins/strategy/mitogen_linear.py" ]; then
+        echo "ERROR: Mitogen strategy file not found at expected path!"
+        exit 1
+      fi
+    - echo "Checking Python dependencies..."
+    - python3 -c "import passlib; import yaml; print('Dependencies OK')"
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# 3. RELEASE: Only tag as 'latest' if tests passed on 'main'
+release-latest:
+  stage: release
+  image:
+    name: gcr.io/go-containerregistry/crane:debug
+    entrypoint: [""]
+  script:
+    # Use crane to quickly tag the verified image as latest without rebuilding
+    - crane auth login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - crane tag "$TEST_IMAGE" latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
