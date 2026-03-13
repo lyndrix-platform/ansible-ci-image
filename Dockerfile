@@ -1,5 +1,5 @@
 # Pinned to a specific version. Do not revert this to :latest.
-FROM cytopia/ansible:2.15-tools
+FROM cytopia/ansible:2.11-tools
 
 # 1. Install system and Python dependencies
 # Added curl (for SOPS download) and age (for local debugging/key generation)
