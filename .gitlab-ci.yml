@@ -42,6 +42,10 @@ test-ansible-ci:
     - ansible --version
     - docker-compose version
     - zensical --version
+    # NEW: Verify cryptography tooling
+    - echo "Verifying SOPS and Age..."
+    - sops --version
+    - age --version
     - |
       echo "Checking Mitogen strategy path..."
       if [ ! -f "/plugins/mitogen/ansible_mitogen/plugins/strategy/mitogen_linear.py" ]; then
