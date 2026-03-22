@@ -1,6 +1,9 @@
 # Using a modern base (Ansible 2.16+)
 FROM cytopia/ansible:latest-tools
 
+
+RUN mkdir -p /root/.ssh && chmod 700 /root/.ssh
+
 # 1. System Dependencies
 # Added 'jq' - you'll thank me later for parsing CI results
 RUN apk add --no-cache \
@@ -48,3 +51,4 @@ RUN ansible-galaxy role install -r /tmp/requirements.yml -p /usr/share/ansible/r
     rm /tmp/requirements.yml
 
 WORKDIR /data
+
