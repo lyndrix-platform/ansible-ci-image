@@ -74,6 +74,8 @@ release-latest:
 # NEW: Trigger the Template Engine to rebuild using the fresh base image
 trigger-engine-rebuild:
   stage: release
+  tags:
+    - docker
   image: curlimages/curl:latest
   needs: [release-latest]
   script:
