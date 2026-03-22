@@ -58,7 +58,6 @@ test-ansible-ci:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
 
-# 3. RELEASE: Only tag as 'latest' if tests passed on 'main'
 release-latest:
   stage: release
   tags:
@@ -67,8 +66,23 @@ release-latest:
     name: gcr.io/go-containerregistry/crane:debug
     entrypoint: [""]
   script:
-    # Use crane to quickly tag the verified image as latest without rebuilding
     - crane auth login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
     - crane tag "$TEST_IMAGE" latest
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+
+# NEW: Trigger the Template Engine to rebuild using the fresh base image
+trigger-engine-rebuild:
+  stage: release
+  image: curlimages/curl:latest
+  needs: [release-latest]
+  script:
+    - |
+      echo "🚀 Base image updated. Triggering Template Engine rebuild..."
+      curl --request POST \
+        --form token=$ENGINE_REBUILD_TOKEN \
+        --form ref=main \
+        --form "variables[TRIGGER_SOURCE]=base-image-update" \
+        "https://gitlab.int.fam-feser.de/api/v4/projects/105/trigger/pipeline"
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
