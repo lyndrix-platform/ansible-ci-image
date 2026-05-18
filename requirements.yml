@@ -7,7 +7,7 @@ roles:
 # Collections from Galaxy
 collections:
   - name: ansible.posix
-    version: 2.1.0
+    version: 2.2.0
   - name: ansible.utils
     version: 6.0.1
   - name: community.docker
