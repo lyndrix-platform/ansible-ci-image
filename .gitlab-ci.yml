@@ -1,11 +1,13 @@
 stages:
   - build
   - test
+  - release-tag
   - release
 
 variables:
   # Reference the image by its unique commit SHA during the pipeline
   TEST_IMAGE: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
+  GITHUB_REPO: "https://github.com/lyndrix-platform/ansible-ci-image"
 
 # 1. BUILD: Build and push the unique SHA image
 build-ansible-ci:
@@ -28,7 +30,6 @@ build-ansible-ci:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+([-.].*)?$/'
 
 # 2. TEST: Verify the "Golden Image" is actually functional
 test-ansible-ci:
@@ -58,7 +59,104 @@ test-ansible-ci:
   rules:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+([-.].*)?$/'
+
+create-release-tag:
+  stage: release-tag
+  tags:
+    - docker
+  image:
+    name: alpine/git:2.47.2
+    entrypoint: [""]
+  resource_group: create-release-tag
+  needs: ["test-ansible-ci"]
+  script:
+    - VERSION="$(awk -F'"' '/^__version__/ {print $2}' version.py)"
+    - |
+      if [ -z "$VERSION" ]; then
+        echo "ERROR: Could not read __version__ from version.py"
+        exit 1
+      fi
+    - TAG="v${VERSION#v}"
+    - echo "Ensuring release tag ${TAG} exists..."
+    - git fetch --tags origin
+    - |
+      if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+        echo "Tag ${TAG} already exists. Nothing to do."
+        exit 0
+      fi
+    - git config user.name "${GITLAB_USER_NAME:-CI Release Bot}"
+    - git config user.email "${GITLAB_USER_EMAIL:-ci-release-bot@local}"
+    - git tag -a "$TAG" -m "Release $TAG"
+    - |
+      JOB_TOKEN_PUSH_URL="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      FALLBACK_PUSH_TOKEN="${RELEASE_TAG_PUSH_TOKEN:-$CI_GLOBAL_TOKEN}"
+      FALLBACK_PUSH_USER="${RELEASE_TAG_PUSH_USER:-oauth2}"
+      FALLBACK_PUSH_URL="https://${FALLBACK_PUSH_USER}:${FALLBACK_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+
+      echo "Trying tag push with CI_JOB_TOKEN first..."
+      if git push "$JOB_TOKEN_PUSH_URL" "refs/tags/$TAG"; then
+        echo "Tag push with CI_JOB_TOKEN succeeded."
+        exit 0
+      fi
+
+      if [ -n "$FALLBACK_PUSH_TOKEN" ]; then
+        echo "CI_JOB_TOKEN push failed. Trying fallback token..."
+        git push "$FALLBACK_PUSH_URL" "refs/tags/$TAG"
+        exit 0
+      fi
+
+      echo "ERROR: CI_JOB_TOKEN push failed and no fallback token is set."
+      echo "Enable CI job token write_repository or set RELEASE_TAG_PUSH_TOKEN/CI_GLOBAL_TOKEN."
+      exit 1
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
+
+trigger-github-release:
+  stage: release-tag
+  tags:
+    - docker
+  image: curlimages/curl:8.8.0
+  needs: ["create-release-tag"]
+  script:
+    - VERSION="$(awk -F'"' '/^__version__/ {print $2}' version.py)"
+    - |
+      if [ -z "$VERSION" ]; then
+        echo "ERROR: Could not read __version__ from version.py"
+        exit 1
+      fi
+    - TAG="v${VERSION#v}"
+    - |
+      if [ -z "$GITHUB_REPO" ]; then
+        echo "GITHUB_REPO is not configured. Skipping GitHub workflow dispatch."
+        exit 0
+      fi
+
+      GITHUB_REPO_PATH="$GITHUB_REPO"
+      GITHUB_REPO_PATH="${GITHUB_REPO_PATH#https://github.com/}"
+      GITHUB_REPO_PATH="${GITHUB_REPO_PATH#http://github.com/}"
+      GITHUB_REPO_PATH="${GITHUB_REPO_PATH#git@github.com:}"
+      GITHUB_REPO_PATH="${GITHUB_REPO_PATH%.git}"
+
+      if ! printf '%s' "$GITHUB_REPO_PATH" | grep -Eq '^[^/]+/[^/]+$'; then
+        echo "ERROR: GITHUB_REPO must be owner/repo or a github.com URL. Current value: $GITHUB_REPO"
+        exit 1
+      fi
+
+      if [ -z "$GITHUB_TOKEN" ]; then
+        echo "GITHUB_TOKEN is not configured. Skipping GitHub workflow dispatch."
+        exit 0
+      fi
+    - WORKFLOW_FILE="${GITHUB_RELEASE_WORKFLOW:-release.yml}"
+    - echo "Dispatching GitHub workflow ${WORKFLOW_FILE} for ${GITHUB_REPO_PATH} (tag ${TAG})..."
+    - |
+      curl --fail-with-body --request POST \
+        --url "https://api.github.com/repos/${GITHUB_REPO_PATH}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+        --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+        --header "Accept: application/vnd.github+json" \
+        --header "X-GitHub-Api-Version: 2022-11-28" \
+        --data "{\"ref\":\"main\",\"inputs\":{\"release_tag\":\"${TAG}\",\"source_sha\":\"${CI_COMMIT_SHA}\"}}"
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main" && $CI_PIPELINE_SOURCE == "push"'
 
 release-images:
   stage: release
@@ -78,8 +176,6 @@ release-images:
           echo "ERROR: Could not read __version__ from version.py"
           exit 1
         fi
-      elif printf '%s' "$CI_COMMIT_TAG" | grep -Eq '^v?[0-9]+\.[0-9]+\.[0-9]+([-.].*)?$'; then
-        RELEASE_VERSION="${CI_COMMIT_TAG#v}"
       fi
 
       RELEASE_MINOR="$(printf '%s' "$RELEASE_VERSION" | cut -d. -f1,2)"
@@ -97,7 +193,6 @@ release-images:
       fi
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
-    - if: '$CI_COMMIT_TAG =~ /^v?\d+\.\d+\.\d+([-.].*)?$/'
 
 # NEW: Trigger the Template Engine to rebuild using the fresh base image
 trigger-engine-rebuild:
