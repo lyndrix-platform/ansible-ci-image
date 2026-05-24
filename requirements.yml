@@ -13,7 +13,7 @@ collections:
   - name: community.docker
     version: 5.0.6
   - name: community.general
-    version: 12.4.0
+    version: 13.0.0
   - name: community.library_inventory_filtering_v1
     version: 1.0.2
 
