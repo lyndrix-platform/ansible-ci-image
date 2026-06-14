@@ -65,7 +65,7 @@ create-release-tag:
   tags:
     - docker
   image:
-    name: alpine/git:v2.52.0
+    name: alpine/git:v2.54.0
     entrypoint: [""]
   resource_group: create-release-tag
   needs: ["test-ansible-ci"]
